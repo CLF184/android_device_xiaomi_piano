@@ -96,6 +96,13 @@ jobs:
           # tablet. Build from the exact source revision used for that image.
           git -C bootable/recovery fetch --depth=1 https://github.com/TWRP-Test/android_bootable_recovery.git 580a0e89cb27007f4584cbb9649ba2607bb21d6a
           git -C bootable/recovery checkout --detach 580a0e89cb27007f4584cbb9649ba2607bb21d6a
+          # Use the documented vold base and the other crypto patch bases.
+          git -C system/vold fetch --depth=1 https://github.com/TWRP-Test/android_system_vold.git 4c83041ec61f9b482085685f1e6aed5a62f103aa
+          git -C system/vold checkout --detach 4c83041ec61f9b482085685f1e6aed5a62f103aa
+          git -C system/security fetch --depth=1 https://github.com/TWRP-Test/android_system_security.git d614e274b585a67e80d3d3fbc3a6e9f695998f78
+          git -C system/security checkout --detach d614e274b585a67e80d3d3fbc3a6e9f695998f78
+          git -C vendor/twrp fetch --depth=1 https://github.com/TWRP-Test/android_vendor_twrp.git f7e60a205cfe0a28cadaa2938ad2c79768ecc38c
+          git -C vendor/twrp checkout --detach f7e60a205cfe0a28cadaa2938ad2c79768ecc38c
           for patch in "$DEVICE"/patches/bootable_recovery/*.patch; do
             git -C bootable/recovery apply --check "$GITHUB_WORKSPACE/$patch"
             git -C bootable/recovery apply "$GITHUB_WORKSPACE/$patch"
