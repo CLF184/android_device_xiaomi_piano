@@ -1,0 +1,176 @@
+name: TWRP 16 Builder (piano)
+
+# Builds the published MSC source branch with the upstream build recipe.
+on:
+  push:
+    branches: [ci/recovery-msc-builds]
+    paths: ['.github/workflows/twrp.yml']
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Free disk space
+        uses: rokibhasansagar/slimhub_actions@c2a6e4317d3de2b623ac7395b05e9d2149e8289b
+
+      - name: Maximize build space
+        uses: easimon/maximize-build-space@c28619d8999a147d5e09c1199f84ff6af6ad5794
+        with:
+          remove-dotnet: 'true'
+          remove-android: 'true'
+          remove-haskell: 'true'
+          remove-codeql: 'true'
+
+      # Checked out AFTER maximize-build-space: that action remounts the
+      # workspace onto a new filesystem and discards anything already there,
+      # which is why an earlier checkout vanished before "Install device tree".
+      - name: Check out device tree
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          path: device_tree
+          ref: a8d55f1c320ceef5c92914b9d64ef061394465f0
+
+      - name: Setup ccache
+        uses: hendrikmuhs/ccache-action@5ebbd400eff9e74630f759d94ddd7b6c26299639
+        with:
+          create-symlink: true
+          max-size: 5G
+
+      - name: Setup zram
+        run: |
+          sudo modprobe zram
+          ZRAM=$(sudo zramctl --find --size 12G --algorithm zstd)
+          sudo mkswap "$ZRAM"
+          sudo swapon --priority 1000 "$ZRAM"
+          free -h
+
+      - name: Setup environment
+        run: |
+          export DEBIAN_FRONTEND=noninteractive
+          sudo apt-get update
+          sudo apt-get install -y repo lz4 cpio python3 openssl
+          git config --global user.name "${{ github.actor }}"
+          git config --global user.email "${{ github.actor }}@users.noreply.github.com"
+
+      - name: Sync source
+        run: |
+          repo init -u https://github.com/TWRP-Test/platform_manifest_twrp_aosp -b twrp-16.0 --depth=1
+          (while true; do echo "$(date +%T) syncing..."; sleep 60; done) &
+          TIP=$!
+          repo sync -c -j$(nproc) --no-clone-bundle --no-tags --force-sync
+          kill $TIP || true
+
+      - name: Install device tree
+        run: |
+          mkdir -p device/xiaomi/piano
+          rsync -a --exclude '.git' --exclude '.github' \
+            "$GITHUB_WORKSPACE/device_tree/" "device/xiaomi/piano/"
+          # The checkout sits inside the build root, so kati would parse its
+          # Android.mk a second time and fail with
+          #   error: device_tree: MODULE.TARGET.EXECUTABLES.piano_qseecomd
+          #          already defined by device/xiaomi/piano
+          rm -rf "$GITHUB_WORKSPACE/device_tree"
+          ls -la device/xiaomi/piano
+
+      - name: Check audit script syntax
+        run: python3 -m py_compile device/xiaomi/piano/tools/piano16-elf-closure-audit.py
+
+      - name: Generate disposable CI AVB key
+        run: |
+          set -euo pipefail
+          umask 077
+          KEY=device/xiaomi/piano/security/recovery_avb.pem
+          mkdir -p "$(dirname "$KEY")"
+          openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:4096 \
+            -out "$KEY" >/dev/null 2>&1
+          test -s "$KEY"
+
+      - name: Apply tested recovery and crypto patches
+        run: |
+          set -euo pipefail
+          DEVICE=device/xiaomi/piano
+          # The recovery branch has advanced since the image validated on the
+          # tablet. Build from the exact source revision used for that image.
+          git -C bootable/recovery fetch --depth=1 https://github.com/TWRP-Test/android_bootable_recovery.git 580a0e89cb27007f4584cbb9649ba2607bb21d6a
+          git -C bootable/recovery checkout --detach 580a0e89cb27007f4584cbb9649ba2607bb21d6a
+          for patch in "$DEVICE"/patches/bootable_recovery/*.patch; do
+            git -C bootable/recovery apply --check "$GITHUB_WORKSPACE/$patch"
+            git -C bootable/recovery apply "$GITHUB_WORKSPACE/$patch"
+          done
+          git -C system/vold apply --check "$GITHUB_WORKSPACE/$DEVICE/patches/system_vold/0001-recovery-crypto-safety-invariants.patch"
+          git -C system/vold apply "$GITHUB_WORKSPACE/$DEVICE/patches/system_vold/0001-recovery-crypto-safety-invariants.patch"
+          git -C system/security apply --check "$GITHUB_WORKSPACE/$DEVICE/patches/system_security/0001-recovery-keymint-mutation-policy.patch"
+          git -C system/security apply "$GITHUB_WORKSPACE/$DEVICE/patches/system_security/0001-recovery-keymint-mutation-policy.patch"
+          git -C vendor/twrp apply --check "$GITHUB_WORKSPACE/$DEVICE/patches/vendor_twrp/0001-export-crypto-flags-to-soong.patch"
+          git -C vendor/twrp apply "$GITHUB_WORKSPACE/$DEVICE/patches/vendor_twrp/0001-export-crypto-flags-to-soong.patch"
+
+      - name: Add QTI boot control
+        run: |
+          set -euo pipefail
+          # The recovery needs a Boot Control HAL to install A/B zips. Without
+          # this checkout, ALLOW_MISSING_DEPENDENCIES dropped the module silently
+          # and every install failed with "AIDL IBootControl not available".
+          rm -rf hardware/qcom/bootctrl
+          git clone --depth=1 -b lineage-23.2-caf https://github.com/LineageOS/android_hardware_qcom_bootctrl.git hardware/qcom/bootctrl
+          git -C hardware/qcom/bootctrl apply "$GITHUB_WORKSPACE/device/xiaomi/piano/patches/hardware_qcom_bootctrl/0001-drop-generated-kernel-headers.patch"
+
+      - name: Build recovery
+        run: |
+          source build/envsetup.sh
+          export ALLOW_MISSING_DEPENDENCIES=true
+          export CCACHE_EXEC=$(command -v ccache)
+          export USE_CCACHE=1
+          export CCACHE_MAXSIZE=5G
+          # ckati overflows the default 8 MB stack on a tree this size.
+          ulimit -s unlimited
+          lunch twrp_piano-bp2a-eng
+          (while true; do echo "$(date +%T) building..."; free -h | sed -n 2p; sleep 30; done) &
+          TIP=$!
+          m recoveryimage -j$(nproc)
+          kill $TIP || true
+
+      # ---- gates ----------------------------------------------------------
+      # Nothing is published unless both pass.
+
+      - name: Gate - image invariants and size budget
+        run: |
+          IMG=out/target/product/piano/recovery.img
+          bash device/xiaomi/piano/tools/piano16-preflash-audit.sh "$IMG"
+
+      - name: Gate - ELF closure
+        run: |
+          IMG=out/target/product/piano/recovery.img
+          python3 device/xiaomi/piano/tools/piano16-elf-closure-audit.py "$IMG"
+
+      - name: Verify AVB signature and MSC binary
+        run: |
+          python3 external/avb/avbtool.py verify_image --image out/target/product/piano/recovery.img --key device/xiaomi/piano/security/recovery_avb.pem
+          grep -aFq 'mscbyarkt' out/target/product/piano/recovery/root/system/bin/recovery
+
+      - name: Collect audited image
+        run: |
+          mkdir -p artifacts
+          cp out/target/product/piano/recovery.img artifacts/twrp-MSC-piano.img
+          cd artifacts
+          sha256sum *.img > SHA256SUMS
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: twrp-MSC-piano
+          path: artifacts/
+          retention-days: 14
+          if-no-files-found: error
+
+      - name: Publish compiled image
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "twrp-msc-${{ github.run_id }}-${{ github.run_attempt }}" artifacts/* --repo "${{ github.repository }}" --target "a8d55f1c320ceef5c92914b9d64ef061394465f0" --prerelease --title "twrp MSC - piano" --notes "Source: a8d55f1c320ceef5c92914b9d64ef061394465f0. ArKT MSC entry in Advanced. Native Android 16 build; image structure, ELF closure and AVB signature audited. Signed with a disposable CI AVB key. Hardware boot and MSC operation have not been tested."
+
+      - name: Remove disposable CI AVB key
+        if: always()
+        run: rm -f device/xiaomi/piano/security/recovery_avb.pem

@@ -1,0 +1,158 @@
+name: OrangeFox R12 Builder (piano)
+
+# Builds the published MSC source branch with the upstream build recipe.
+on:
+  push:
+    branches: [ci/recovery-msc-builds]
+    paths: ['.github/workflows/orangefox.yml']
+  workflow_dispatch:
+
+env:
+  DEVICE_PATH: device/xiaomi/piano
+  DEVICE_NAME: piano
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Free disk space
+        uses: rokibhasansagar/slimhub_actions@c2a6e4317d3de2b623ac7395b05e9d2149e8289b
+
+      - name: Maximize build space
+        uses: easimon/maximize-build-space@c28619d8999a147d5e09c1199f84ff6af6ad5794
+        with:
+          remove-dotnet: 'true'
+          remove-android: 'true'
+          remove-haskell: 'true'
+          remove-codeql: 'true'
+
+      # Checked out after maximize-build-space, which remounts the workspace
+      # and discards anything already there.
+      - name: Check out device tree
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          path: device_tree
+          ref: d238356af346515ce0f43e38d56a19e44fd0b7a2
+
+      - name: Setup ccache
+        uses: hendrikmuhs/ccache-action@5ebbd400eff9e74630f759d94ddd7b6c26299639
+        with:
+          create-symlink: true
+          max-size: 5G
+
+      - name: Setup zram
+        run: |
+          sudo modprobe zram
+          ZRAM=$(sudo zramctl --find --size 12G --algorithm zstd)
+          sudo mkswap "$ZRAM"
+          sudo swapon --priority 1000 "$ZRAM"
+          free -h
+
+      - name: Setup environment
+        run: |
+          export DEBIAN_FRONTEND=noninteractive
+          sudo apt-get update
+          sudo apt-get install -y repo lz4 cpio python3 openssl
+          git config --global user.name "${{ github.actor }}"
+          git config --global user.email "${{ github.actor }}@users.noreply.github.com"
+
+      - name: Sync source
+        run: |
+          repo init -u https://github.com/OrangeFox16/platform_manifest_twrp_aosp -b twrp-16 --depth=1
+          mkdir -p .repo/local_manifests
+          cp "$GITHUB_WORKSPACE"/device_tree/manifests/*.xml .repo/local_manifests/
+          (while true; do echo "$(date +%T) syncing..."; sleep 60; done) &
+          TIP=$!
+          repo sync -c -j$(nproc) --no-clone-bundle --no-tags --force-sync
+          kill $TIP || true
+          git clone --depth=1 -b fox_16.0 https://gitlab.com/OrangeFox/vendor/recovery.git vendor/recovery
+
+      - name: Install device tree
+        run: |
+          mkdir -p "$DEVICE_PATH"
+          rsync -a --exclude '.git' --exclude '.github' \
+            "$GITHUB_WORKSPACE/device_tree/" "$DEVICE_PATH/"
+          # The checkout sits inside the build root; remove it so kati does not
+          # parse the device Android.mk twice.
+          rm -rf "$GITHUB_WORKSPACE/device_tree"
+
+      - name: Apply OrangeFox source patches
+        run: |
+          git -C bootable/recovery fetch --depth=1 https://gitlab.com/OrangeFox/bootable/Recovery.git 6ff71bed1506fec1893247f0c74d7ae87c594eed
+          git -C bootable/recovery checkout --detach 6ff71bed1506fec1893247f0c74d7ae87c594eed
+          bash "$DEVICE_PATH/tools/apply-ofox-patches.sh" "$GITHUB_WORKSPACE"
+
+      - name: Generate disposable CI AVB key
+        run: |
+          set -euo pipefail
+          umask 077
+          KEY="$DEVICE_PATH/security/recovery_avb.pem"
+          mkdir -p "$(dirname "$KEY")"
+          openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:4096 -out "$KEY" >/dev/null 2>&1
+          test -s "$KEY"
+
+      - name: Add QTI boot control
+        run: |
+          set -euo pipefail
+          # The recovery needs a Boot Control HAL to install A/B zips. Without
+          # this checkout, ALLOW_MISSING_DEPENDENCIES dropped the module silently
+          # and every install failed with "AIDL IBootControl not available".
+          rm -rf hardware/qcom/bootctrl
+          git clone --depth=1 -b lineage-23.2-caf https://github.com/LineageOS/android_hardware_qcom_bootctrl.git hardware/qcom/bootctrl
+          git -C hardware/qcom/bootctrl apply "$GITHUB_WORKSPACE/$DEVICE_PATH/patches/hardware_qcom_bootctrl/0001-drop-generated-kernel-headers.patch"
+
+      - name: Build recovery
+        run: |
+          export ALLOW_MISSING_DEPENDENCIES=true
+          export FOX_USE_TWRP_RECOVERY_IMAGE_BUILDER=1
+          export LC_ALL=C
+          export CCACHE_EXEC=$(command -v ccache)
+          export USE_CCACHE=1
+          # ckati overflows the default 8 MB stack on a tree this size.
+          ulimit -s unlimited
+          source build/envsetup.sh
+          lunch twrp_piano-bp2a-eng
+          (while true; do echo "$(date +%T) building..."; free -h | sed -n 2p; sleep 30; done) &
+          TIP=$!
+          m recoveryimage -j$(nproc)
+          kill $TIP || true
+
+      # ---- gates: nothing is uploaded unless both pass --------------------
+
+      - name: Gate - image invariants and size budget
+        run: bash "$DEVICE_PATH/tools/piano16-preflash-audit.sh" "out/target/product/$DEVICE_NAME/recovery.img"
+
+      - name: Gate - ELF closure
+        run: python3 "$DEVICE_PATH/tools/piano16-elf-closure-audit.py" "out/target/product/$DEVICE_NAME/recovery.img"
+
+      - name: Verify AVB signature and MSC binary
+        run: |
+          python3 external/avb/avbtool.py verify_image --image out/target/product/piano/recovery.img --key device/xiaomi/piano/security/recovery_avb.pem
+          grep -aFq 'mscbyarkt' out/target/product/piano/recovery/root/system/bin/recovery
+
+      - name: Collect audited image
+        run: |
+          mkdir -p artifacts
+          cp out/target/product/piano/recovery.img artifacts/orangefox-MSC-piano.img
+          cd artifacts
+          sha256sum *.img > SHA256SUMS
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: orangefox-MSC-piano
+          path: artifacts/
+          retention-days: 14
+          if-no-files-found: error
+
+      - name: Publish compiled image
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "orangefox-msc-${{ github.run_id }}-${{ github.run_attempt }}" artifacts/* --repo "${{ github.repository }}" --target "d238356af346515ce0f43e38d56a19e44fd0b7a2" --prerelease --title "orangefox MSC - piano" --notes "Source: d238356af346515ce0f43e38d56a19e44fd0b7a2. ArKT MSC entry in Advanced. Native Android 16 build; image structure, ELF closure and AVB signature audited. Signed with a disposable CI AVB key. Hardware boot and MSC operation have not been tested."
+
+      - name: Remove disposable CI AVB key
+        if: always()
+        run: rm -f "$DEVICE_PATH/security/recovery_avb.pem"
