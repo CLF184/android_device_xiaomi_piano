@@ -34,7 +34,7 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           path: device_tree
-          ref: d238356af346515ce0f43e38d56a19e44fd0b7a2
+          ref: cfe2bb3f1ed6ad48a7a063f8e3cb805bb24f9043
 
       - name: Setup ccache
         uses: hendrikmuhs/ccache-action@5ebbd400eff9e74630f759d94ddd7b6c26299639
@@ -151,7 +151,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "orangefox-msc-${{ github.run_id }}-${{ github.run_attempt }}" artifacts/* --repo "${{ github.repository }}" --target "d238356af346515ce0f43e38d56a19e44fd0b7a2" --prerelease --title "orangefox MSC - piano" --notes "Source: d238356af346515ce0f43e38d56a19e44fd0b7a2. ArKT MSC entry in Advanced. Native Android 16 build; image structure, ELF closure and AVB signature audited. Signed with a disposable CI AVB key. Hardware boot and MSC operation have not been tested."
+          gh release create "orangefox-msc-${{ github.run_id }}-${{ github.run_attempt }}" artifacts/* --repo "${{ github.repository }}" --target "cfe2bb3f1ed6ad48a7a063f8e3cb805bb24f9043" --prerelease --title "orangefox MSC - piano" --notes "Source: cfe2bb3f1ed6ad48a7a063f8e3cb805bb24f9043. ArKT MSC entry in Advanced with piano USB/unmount fixes. Native Android 16 build; image structure, ELF closure and AVB signature audited. Signed with a disposable CI AVB key. USB setup was verified on piano with read-only MSC and ADB; this rebuilt image and writable MSC still require device validation."
 
       - name: Remove disposable CI AVB key
         if: always()
