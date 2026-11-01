@@ -1,0 +1,235 @@
+piano: port ArKT MSC into Advanced (enable only).
+
+MSC helpers are copied from ArKT-7/twrp_device_xiaomi_nabu at
+9bf1fd3b182d9884f7f9309c40e8376cdc8e37d4. Preserve its disk, controller,
+USB setup and setenforce 0; expose no disable or automatic reboot action.
+
+diff --git a/gui/action.cpp b/gui/action.cpp
+index 676c3d1..37b98f8 100644
+--- a/gui/action.cpp
++++ b/gui/action.cpp
+@@ -204,6 +204,7 @@ GUIAction::GUIAction(rapidxml::xml_node<>* node)
+ 		ADD_ACTION(enablefastboot);
+ 		ADD_ACTION(changeterminal);
+ 		ADD_ACTION(unmapsuperdevices);
++		ADD_ACTION(mscbyarkt);
+ 
+ 		// remember actions that run in the caller thread
+ 		for (mapFunc::const_iterator it = mf.begin(); it != mf.end(); ++it)
+@@ -2767,3 +2768,13 @@ int GUIAction::wlantest(std::string arg __unused) {
+     return 0;
+ }
+ #endif
++
++int GUIAction::mscbyarkt(std::string arg __unused)
++{
++    if (access(ARKT_MSC_MARKER_PATH, F_OK) == 0) {
++        gui_print("\nMass storage mode is already enabled!\n");
++        return 1;
++    }
++    TWFunc::MscByArKT();
++    return 0;
++}
+diff --git a/gui/objects.hpp b/gui/objects.hpp
+index ef85416..a2e4f6f 100644
+--- a/gui/objects.hpp
++++ b/gui/objects.hpp
+@@ -323,6 +323,7 @@ protected:
+ 	int set(std::string arg);
+ 	int clear(std::string arg);
+ 	int mount(std::string arg);
++	int mscbyarkt(std::string arg);
+ 	int unmount(std::string arg);
+ 	int restoredefaultsettings(std::string arg);
+ 	int copylog(std::string arg);
+diff --git a/gui/theme/common/landscape.xml b/gui/theme/common/landscape.xml
+index 372249a..ea32208 100755
+--- a/gui/theme/common/landscape.xml
++++ b/gui/theme/common/landscape.xml
+@@ -3674,6 +3674,9 @@
+ 
+ 			<listbox style="advanced_listbox">
+ 				<placement x="%center_x%" y="%row2_y%" w="%content_half_width%" h="%fileselector_install_height%"/>
++				<listitem name="{@piano_msc_enable=Enable USB Mass Storage}">
++					<action function="mscbyarkt"/>
++				</listitem>
+ 				<listitem name="{@change_twrp_folder_btn=Change TWRP folder}">
+ 					<condition var1="tw_is_decrypted" var2="1"/>
+ 					<action function="page">changeTwrpFolder</action>
+diff --git a/gui/theme/common/languages/en.xml b/gui/theme/common/languages/en.xml
+index 743e8a4..5f9e03f 100755
+--- a/gui/theme/common/languages/en.xml
++++ b/gui/theme/common/languages/en.xml
+@@ -785,5 +785,6 @@
+ 		<string name="wlan_start_service_btn">Start Service</string>
+ 		<string name="select_wlan_hdr">Select WLAN to Connect</string>
+ 		<string name="next_btn">Next</string>
++		<string name="piano_msc_enable">Enable USB Mass Storage</string>
+ 	</resources>
+ </language>
+diff --git a/gui/theme/common/portrait.xml b/gui/theme/common/portrait.xml
+index 109b9a2..62e6aa1 100755
+--- a/gui/theme/common/portrait.xml
++++ b/gui/theme/common/portrait.xml
+@@ -3978,6 +3978,9 @@
+ 
+ 			<listbox style="advanced_listbox">
+ 				<placement x="%indent%" y="%row12a_y%" w="%content_width%" h="%listbox_advanced_height%"/>
++				<listitem name="{@piano_msc_enable=Enable USB Mass Storage}">
++					<action function="mscbyarkt"/>
++				</listitem>
+ 				<listitem name="{@change_twrp_folder_btn=Change TWRP folder}">
+ 					<condition var1="tw_is_decrypted" var2="1"/>
+ 					<action function="page">changeTwrpFolder</action>
+diff --git a/gui/theme/extra-languages/languages/zh_CN.xml b/gui/theme/extra-languages/languages/zh_CN.xml
+index 7bc9fb1..8b69f88 100644
+--- a/gui/theme/extra-languages/languages/zh_CN.xml
++++ b/gui/theme/extra-languages/languages/zh_CN.xml
+@@ -777,5 +777,6 @@
+ 		<string name="wlan_start_service_btn">启动服务</string>
+ 		<string name="select_wlan_hdr">选择需要连接的WiFi</string>
+ 		<string name="next_btn">下一步</string>
++		<string name="piano_msc_enable">开启 USB 大容量存储</string>
+ 	</resources>
+ </language>
+diff --git a/twrp-functions.cpp b/twrp-functions.cpp
+index 35ad972..1a0d06c 100644
+--- a/twrp-functions.cpp
++++ b/twrp-functions.cpp
+@@ -16,6 +16,9 @@
+ 	along with TWRP.  If not, see <http://www.gnu.org/licenses/>.
+ */
+ 
++#include <chrono>
++#include <sys/ioctl.h>
++#include <linux/fs.h>
+ #include <stdio.h>
+ #include <stdlib.h>
+ #include <string>
+@@ -1527,3 +1530,104 @@ bool TWFunc::Get_Service_From_Manifest(std::string basepath, std::string service
+ }
+ 
+ #endif // ndef BUILD_TWRPTAR_MAIN
++
++#ifndef BUILD_TWRPTAR_MAIN
++// MSC implementation from ArKT-7/twrp_device_xiaomi_nabu, commit 9bf1fd3.
++static void FlushBlockDeviceByArKT(const std::string& dev) {
++    if (!dev.empty()) {
++        int fd = open(dev.c_str(), O_RDONLY);
++        if (fd >= 0) {
++            ioctl(fd, BLKFLSBUF, 0);
++            close(fd);
++        }
++    }
++}
++
++static void ForceUnmountByArKT(const std::string& path) {
++    TWPartition* part = PartitionManager.Find_Partition_By_Path(path);
++    std::string actual_block;
++    if (part) {
++        actual_block = part->Actual_Block_Device;
++        if (!actual_block.empty()) {
++            FlushBlockDeviceByArKT(actual_block);
++        }
++        part->UnMount(false);
++    } else {
++        PartitionManager.UnMount_By_Path(path, true); 
++    }
++    umount2(path.c_str(), MNT_DETACH|MNT_FORCE);
++    if (!actual_block.empty()) {
++        TWFunc::Exec_Cmd("umount -lf " + actual_block + " >/dev/null 2>&1 || true");
++    }
++    if (path == "/win" || path == "/esp" || path == "/metadata" || path == "/userdata") {
++        TWFunc::Exec_Cmd("umount -lf /dev/block/bootdevice/by-name" + path + " >/dev/null 2>&1 || true");
++    }
++}
++
++void TWFunc::CommonByArKT() 
++{
++    std::string usb_config = android::base::GetProperty("sys.usb.config", "");
++    if (usb_config.find("mtp") != std::string::npos) {
++        gui_print("\nMTP mode detected, resetting USB to ADB...");
++        PartitionManager.Disable_MTP();
++        android::base::SetProperty("sys.usb.config", "none");
++        android::base::SetProperty("sys.usb.config", "adb");
++        Exec_Cmd("rm -f /config/usb_gadget/g1/configs/b.1/f* || true");
++        std::this_thread::sleep_for(std::chrono::milliseconds(500));
++    }
++
++    gui_print("\nUnmounting all required partitions...");
++    sync();
++
++    ForceUnmountByArKT("/win");
++    ForceUnmountByArKT("/esp");
++
++    std::vector<PartitionList> mountable_parts;
++    PartitionManager.Get_Partition_List("mount", &mountable_parts);
++
++    for (const PartitionList& list_part : mountable_parts) {
++        TWPartition* part = PartitionManager.Find_Partition_By_Path(list_part.Mount_Point);
++        if (part == nullptr) continue;
++
++        const std::string mp = part->Get_Mount_Point();
++        if (mp == "/data" || mp == "/sdcard" || mp == "/metadata" || mp == "/win" || mp == "/esp") continue;
++
++        if (part->Actual_Block_Device.find("sda") != std::string::npos ||
++            part->Actual_Block_Device.find("bootdevice") != std::string::npos ||
++            part->Get_Super_Status()) {
++            ForceUnmountByArKT(mp);
++        }
++    }
++    sync();
++    FlushBlockDeviceByArKT("/dev/block/sda");
++}
++
++void TWFunc::MscByArKT()
++{
++    DataManager::SetValue(TW_ACTION_BUSY, 1);
++
++    std::thread([] {
++        gui_print("\nEnabling Mass Storage Mode!\n\n");
++        CommonByArKT();
++        std::this_thread::sleep_for(std::chrono::milliseconds(500));
++
++        const std::string msc_script = R"ArKT(
++            setenforce 0
++            echo 0x2717 > /config/usb_gadget/g1/idVendor
++            echo 0x9039 > /config/usb_gadget/g1/idProduct
++            echo 0xEF > /config/usb_gadget/g1/bDeviceClass
++            echo 0x02 > /config/usb_gadget/g1/bDeviceSubClass
++            echo 0x01 > /config/usb_gadget/g1/bDeviceProtocol
++            ln -s /config/usb_gadget/g1/functions/mass_storage.0 /config/usb_gadget/g1/configs/b.1/ 2>/dev/null
++            echo /dev/block/sda > /config/usb_gadget/g1/configs/b.1/mass_storage.0/lun.0/file
++            echo 0 > /config/usb_gadget/g1/configs/b.1/mass_storage.0/lun.0/removable
++            echo "" > /config/usb_gadget/g1/UDC 2>/dev/null
++            echo a600000.dwc3 > /config/usb_gadget/g1/UDC 2>/dev/null
++        )ArKT";
++
++        Exec_Cmd(msc_script);
++        gui_print("\nDone!");
++        DataManager::SetValue(TW_ACTION_BUSY, 0);
++    }).detach();
++}
++#endif
+diff --git a/twrp-functions.hpp b/twrp-functions.hpp
+index 9d23d07..391068b 100644
+--- a/twrp-functions.hpp
++++ b/twrp-functions.hpp
+@@ -51,6 +51,8 @@ enum Archive_Type {
+ };
+ 
+ // Partition class
++#define ARKT_MSC_MARKER_PATH "/config/usb_gadget/g1/configs/b.1/mass_storage.0"
++
+ class TWFunc
+ {
+ public:
+@@ -104,6 +106,8 @@ public:
+ 	static bool Create_Dir_Recursive(const std::string& path, mode_t mode = 0755, uid_t uid = -1, gid_t gid = -1);  // Create directory and it's parents, if they don't exist. mode, uid and gid are set to all _newly_ created folders. If whole path exists, do nothing.
+ 	static int Set_Brightness(std::string brightness_value); // Well, you can read, it does what it says, passing return int from TWFunc::Write_File ;)
+ 	static bool Toggle_MTP(bool enable);                                        // Disables MTP if enable is false and re-enables MTP if enable is true and it was enabled the last time it was toggled off
++	static void CommonByArKT();
++	static void MscByArKT();
+ 	static std::string to_string(unsigned long value); //convert ul to string
+ 	static void SetPerformanceMode(bool mode); // support recovery.perf.mode
+ 	static void Disable_Stock_Recovery_Replace(); // Disable stock ROMs from replacing TWRP with stock recovery

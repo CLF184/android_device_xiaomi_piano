@@ -6,7 +6,7 @@
 mkdir -p ~/android/twrp-16 && cd ~/android/twrp-16
 repo init -u https://github.com/TWRP-Test/platform_manifest_twrp_aosp.git -b twrp-16.0 --depth=1
 repo sync -c -j8 --no-clone-bundle --no-tags
-git clone -b twrp-16.0 https://github.com/ALXP-DANIEL/android_device_xiaomi_piano.git device/xiaomi/piano
+git clone -b feat/twrp-usb-mass-storage https://github.com/CLF184/android_device_xiaomi_piano.git device/xiaomi/piano
 ```
 
 ## Source patches

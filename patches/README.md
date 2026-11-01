@@ -1,5 +1,10 @@
 # Source patches — TWRP16 piano
 
+`bootable_recovery/0008-arkt-mass-storage.patch` ports ArKT's MSC helpers
+unchanged from device-tree commit `9bf1fd3b182d9884f7f9309c40e8376cdc8e37d4`.
+Its only GUI entry is an enable item in Advanced; exit uses the normal reboot
+menu. It retains the reference's runtime `setenforce 0` and whole-disk export.
+
 Applied to the build checkout (`~/android/twrp-16`), not to this device tree.
 The GitHub Actions workflow fetches the tested `bootable/recovery` revision
 `580a0e89cb27007f4584cbb9649ba2607bb21d6a` and applies these patches
