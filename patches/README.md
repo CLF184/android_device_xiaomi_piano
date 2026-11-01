@@ -7,8 +7,9 @@ Its only GUI entry is an enable item in Advanced; exit uses the normal reboot
 menu. It retains the reference's runtime `setenforce 0` and whole-disk export.
 
 Piano stops its stock-vendor crypto services and normally unmounts filesystems
-backed by the exported disk, including device-mapper volumes, through
-`/piano/bin/piano-msc-prepare.sh`. A busy filesystem aborts activation.
+backed by the exported disk, including device-mapper volumes. Preparation is
+embedded in the recovery binary and creates no script or temporary list files.
+A busy filesystem aborts activation.
 Missing optional `/win` and `/esp` partitions are not reported as errors.
 USB is unbound before linking MSC, ADB is retained, and command failures are
 reported instead of printing success. Concurrent enable requests are ignored.
