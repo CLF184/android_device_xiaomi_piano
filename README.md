@@ -2,6 +2,18 @@
 
 OrangeFox 16 recovery device tree for the Xiaomi Pad 8 Pro (piano).
 
+## USB mass storage
+
+In **Advanced**, tap **Enable USB Mass Storage**. The MSC implementation is
+copied from [ArKT's Nabu recovery](https://github.com/ArKT-7/twrp_device_xiaomi_nabu/tree/9bf1fd3b182d9884f7f9309c40e8376cdc8e37d4):
+it exports `/dev/block/sda` read/write and switches SELinux to Permissive with
+`setenforce 0`. It has no disable item or automatic reboot. Safely eject the
+disk on the computer, then use recovery's existing Reboot menu to leave MSC.
+
+Apply `patches/ofox_bootable_recovery/0017-arkt-mass-storage.patch` after the
+existing OrangeFox patches, or use `tools/apply-ofox-patches.sh`. This changes
+the recovery sources, not the ramdisk-only boot format or the ROM kernel.
+
 Path:
 
 ```text

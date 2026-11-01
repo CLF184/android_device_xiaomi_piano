@@ -1,5 +1,10 @@
 # OrangeFox 16 source patches
 
+`ofox_bootable_recovery/0017-arkt-mass-storage.patch` ports ArKT's MSC helpers
+unchanged from device-tree commit `9bf1fd3b182d9884f7f9309c40e8376cdc8e37d4`.
+Its only GUI entry is an enable item in Advanced; exit uses the normal reboot
+menu. It retains the reference's runtime `setenforce 0` and whole-disk export.
+
 The `ofox_*` directories hold the changes this device needs in OrangeFox's own
 source. The device tree alone is not enough: a build from a fresh OrangeFox 16
 sync is missing these fixes.
