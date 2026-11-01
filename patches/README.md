@@ -1,9 +1,17 @@
 # Source patches — TWRP16 piano
 
 `bootable_recovery/0008-arkt-mass-storage.patch` ports ArKT's MSC helpers
-unchanged from device-tree commit `9bf1fd3b182d9884f7f9309c40e8376cdc8e37d4`.
+from device-tree commit `9bf1fd3b182d9884f7f9309c40e8376cdc8e37d4`,
+with piano USB and mount preparation adaptations.
 Its only GUI entry is an enable item in Advanced; exit uses the normal reboot
 menu. It retains the reference's runtime `setenforce 0` and whole-disk export.
+
+Piano stops its stock-vendor crypto services and normally unmounts filesystems
+backed by the exported disk, including device-mapper volumes, through
+`/piano/bin/piano-msc-prepare.sh`. A busy filesystem aborts activation.
+Missing optional `/win` and `/esp` partitions are not reported as errors.
+USB is unbound before linking MSC, ADB is retained, and command failures are
+reported instead of printing success. Concurrent enable requests are ignored.
 
 Applied to the build checkout (`~/android/twrp-16`), not to this device tree.
 The GitHub Actions workflow fetches the tested `bootable/recovery` revision

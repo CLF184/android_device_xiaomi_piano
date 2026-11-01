@@ -1,9 +1,3 @@
-piano: port ArKT MSC into Advanced (enable only).
-
-MSC helpers are copied from ArKT-7/twrp_device_xiaomi_nabu at
-9bf1fd3b182d9884f7f9309c40e8376cdc8e37d4. Preserve its disk, controller,
-USB setup and setenforce 0; expose no disable or automatic reboot action.
-
 diff --git a/gui/action.cpp b/gui/action.cpp
 index 676c3d1..37b98f8 100644
 --- a/gui/action.cpp
@@ -93,20 +87,21 @@ index 7bc9fb1..8b69f88 100644
  	</resources>
  </language>
 diff --git a/twrp-functions.cpp b/twrp-functions.cpp
-index 35ad972..1a0d06c 100644
+index 35ad972..160c8fa 100644
 --- a/twrp-functions.cpp
 +++ b/twrp-functions.cpp
-@@ -16,6 +16,9 @@
+@@ -16,6 +16,10 @@
  	along with TWRP.  If not, see <http://www.gnu.org/licenses/>.
  */
  
 +#include <chrono>
++#include <atomic>
 +#include <sys/ioctl.h>
 +#include <linux/fs.h>
  #include <stdio.h>
  #include <stdlib.h>
  #include <string>
-@@ -1527,3 +1530,104 @@ bool TWFunc::Get_Service_From_Manifest(std::string basepath, std::string service
+@@ -1527,3 +1531,144 @@ bool TWFunc::Get_Service_From_Manifest(std::string basepath, std::string service
  }
  
  #endif // ndef BUILD_TWRPTAR_MAIN
@@ -133,18 +128,18 @@ index 35ad972..1a0d06c 100644
 +        }
 +        part->UnMount(false);
 +    } else {
-+        PartitionManager.UnMount_By_Path(path, true); 
++        PartitionManager.UnMount_By_Path(path, false);
 +    }
-+    umount2(path.c_str(), MNT_DETACH|MNT_FORCE);
++    umount2(path.c_str(), 0);
 +    if (!actual_block.empty()) {
-+        TWFunc::Exec_Cmd("umount -lf " + actual_block + " >/dev/null 2>&1 || true");
++        TWFunc::Exec_Cmd("umount " + actual_block + " >/dev/null 2>&1 || true");
 +    }
 +    if (path == "/win" || path == "/esp" || path == "/metadata" || path == "/userdata") {
-+        TWFunc::Exec_Cmd("umount -lf /dev/block/bootdevice/by-name" + path + " >/dev/null 2>&1 || true");
++        TWFunc::Exec_Cmd("umount /dev/block/bootdevice/by-name" + path + " >/dev/null 2>&1 || true");
 +    }
 +}
 +
-+void TWFunc::CommonByArKT() 
++bool TWFunc::CommonByArKT()
 +{
 +    std::string usb_config = android::base::GetProperty("sys.usb.config", "");
 +    if (usb_config.find("mtp") != std::string::npos) {
@@ -158,6 +153,10 @@ index 35ad972..1a0d06c 100644
 +
 +    gui_print("\nUnmounting all required partitions...");
 +    sync();
++    if (Exec_Cmd("sh /piano/bin/piano-msc-prepare.sh") != 0) {
++        gui_print("\nMSC preparation failed. Reboot Recovery before retrying.\n");
++        return false;
++    }
 +
 +    ForceUnmountByArKT("/win");
 +    ForceUnmountByArKT("/esp");
@@ -180,39 +179,75 @@ index 35ad972..1a0d06c 100644
 +    }
 +    sync();
 +    FlushBlockDeviceByArKT("/dev/block/sda");
++    return true;
 +}
 +
 +void TWFunc::MscByArKT()
 +{
++    static std::atomic<bool> starting(false);
++    if (starting.exchange(true)) return;
 +    DataManager::SetValue(TW_ACTION_BUSY, 1);
 +
 +    std::thread([] {
 +        gui_print("\nEnabling Mass Storage Mode!\n\n");
-+        CommonByArKT();
++        if (!CommonByArKT()) {
++            DataManager::SetValue(TW_ACTION_BUSY, 0);
++            starting = false;
++            return;
++        }
 +        std::this_thread::sleep_for(std::chrono::milliseconds(500));
 +
 +        const std::string msc_script = R"ArKT(
++            set -e
++            g=/config/usb_gadget/g1
++            trap 'status=$?; if [ "$status" -ne 0 ]; then
++                set +e
++                if [ -n "$(cat "$g/UDC")" ]; then echo "" > "$g/UDC"; fi
++                rm -f "$g/configs/b.1/mass_storage.0"
++                echo "" > "$g/functions/mass_storage.0/lun.0/file"
++                setprop sys.usb.config adb
++            fi' EXIT
++            setprop sys.usb.config none
++            retries=0
++            while [ "$(getprop sys.usb.state)" != none ]; do
++                retries=$((retries + 1))
++                [ "$retries" -lt 50 ] || exit 1
++                sleep 0.1
++            done
++            if [ -n "$(cat "$g/UDC")" ]; then echo "" > "$g/UDC"; fi
 +            setenforce 0
-+            echo 0x2717 > /config/usb_gadget/g1/idVendor
-+            echo 0x9039 > /config/usb_gadget/g1/idProduct
-+            echo 0xEF > /config/usb_gadget/g1/bDeviceClass
-+            echo 0x02 > /config/usb_gadget/g1/bDeviceSubClass
-+            echo 0x01 > /config/usb_gadget/g1/bDeviceProtocol
-+            ln -s /config/usb_gadget/g1/functions/mass_storage.0 /config/usb_gadget/g1/configs/b.1/ 2>/dev/null
-+            echo /dev/block/sda > /config/usb_gadget/g1/configs/b.1/mass_storage.0/lun.0/file
-+            echo 0 > /config/usb_gadget/g1/configs/b.1/mass_storage.0/lun.0/removable
-+            echo "" > /config/usb_gadget/g1/UDC 2>/dev/null
-+            echo a600000.dwc3 > /config/usb_gadget/g1/UDC 2>/dev/null
++            echo 0x2717 > "$g/idVendor"
++            echo 0x9039 > "$g/idProduct"
++            echo 0xEF > "$g/bDeviceClass"
++            echo 0x02 > "$g/bDeviceSubClass"
++            echo 0x01 > "$g/bDeviceProtocol"
++            mkdir -p "$g/functions/mass_storage.0"
++            echo 0 > "$g/functions/mass_storage.0/lun.0/ro"
++            echo 0 > "$g/functions/mass_storage.0/lun.0/removable"
++            echo /dev/block/sda > "$g/functions/mass_storage.0/lun.0/file"
++            ln -s "$g/functions/mass_storage.0" "$g/configs/b.1/mass_storage.0"
++            setprop ctl.start adbd
++            retries=0
++            while [ "$(getprop sys.usb.ffs.ready)" != 1 ]; do
++                retries=$((retries + 1))
++                [ "$retries" -lt 50 ] || exit 1
++                sleep 0.1
++            done
++            ln -s "$g/functions/ffs.adb" "$g/configs/b.1/f1"
++            echo a600000.dwc3 > "$g/UDC"
 +        )ArKT";
 +
-+        Exec_Cmd(msc_script);
-+        gui_print("\nDone!");
++        if (Exec_Cmd(msc_script) == 0)
++            gui_print("\nDone! Reboot Recovery after using mass storage.\n");
++        else
++            gui_print("\nMSC USB setup failed. Reboot Recovery before retrying.\n");
 +        DataManager::SetValue(TW_ACTION_BUSY, 0);
++        starting = false;
 +    }).detach();
 +}
 +#endif
 diff --git a/twrp-functions.hpp b/twrp-functions.hpp
-index 9d23d07..391068b 100644
+index 9d23d07..00cefed 100644
 --- a/twrp-functions.hpp
 +++ b/twrp-functions.hpp
 @@ -51,6 +51,8 @@ enum Archive_Type {
@@ -228,7 +263,7 @@ index 9d23d07..391068b 100644
  	static bool Create_Dir_Recursive(const std::string& path, mode_t mode = 0755, uid_t uid = -1, gid_t gid = -1);  // Create directory and it's parents, if they don't exist. mode, uid and gid are set to all _newly_ created folders. If whole path exists, do nothing.
  	static int Set_Brightness(std::string brightness_value); // Well, you can read, it does what it says, passing return int from TWFunc::Write_File ;)
  	static bool Toggle_MTP(bool enable);                                        // Disables MTP if enable is false and re-enables MTP if enable is true and it was enabled the last time it was toggled off
-+	static void CommonByArKT();
++	static bool CommonByArKT();
 +	static void MscByArKT();
  	static std::string to_string(unsigned long value); //convert ul to string
  	static void SetPerformanceMode(bool mode); // support recovery.perf.mode
