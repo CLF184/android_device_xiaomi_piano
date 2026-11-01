@@ -75,7 +75,7 @@ index bfed685..b6d1a30 100644
  					<icon res="devices"/>
  					<action function="set">fox_adb=0</action>
 diff --git a/twrp-functions.cpp b/twrp-functions.cpp
-index 4968cec..172b64f 100755
+index 4968cec..c4f0100 100755
 --- a/twrp-functions.cpp
 +++ b/twrp-functions.cpp
 @@ -20,6 +20,10 @@
@@ -89,7 +89,7 @@ index 4968cec..172b64f 100755
  #include <stdio.h>
  #include <stdlib.h>
  #include <string>
-@@ -5207,3 +5211,144 @@ bool TWFunc::Block_Operations_Until_Reboot() {
+@@ -5207,3 +5211,180 @@ bool TWFunc::Block_Operations_Until_Reboot() {
  #endif
  }
  //
@@ -141,7 +141,43 @@ index 4968cec..172b64f 100755
 +
 +    gui_print("\nUnmounting all required partitions...");
 +    sync();
-+    if (Exec_Cmd("sh /piano/bin/piano-msc-prepare.sh") != 0) {
++    const std::string prepare_script = R"ArKTPrepare(
++set -eu
++for service in vendor.piano_prepdecrypt vendor.piano_boot_adsp \
++    vendor.piano_batterysecret vendor.weaver_hos3 vendor.weaver_hos4 \
++    vendor.keymint vendor.gatekeeper_default vendor.ssgtzd vendor.qwesd \
++    vendor.minkdaemon vendor.qseecomd; do
++    [ -n "$(getprop init.svc.$service)" ] || continue
++    setprop ctl.stop "$service"
++    retries=0
++    while [ "$(getprop init.svc.$service)" != stopped ]; do
++        retries=$((retries + 1))
++        [ "$retries" -lt 50 ] || exit 1
++        sleep 0.1
++    done
++done
++# Only unmount filesystems backed by the exported UFS logical disk.
++on_export_disk() {
++    case "$1" in sda|sda[0-9]*) return 0 ;; esac
++    for slave in /sys/class/block/"$1"/slaves/*; do
++        [ -e "$slave" ] || continue
++        if on_export_disk "${slave##*/}"; then return 0; fi
++    done
++    return 1
++}
++sync
++while read -r source target rest; do
++    case "$source" in /dev/block/*) ;; *) continue ;; esac
++    device=$(readlink -f "$source")
++    if on_export_disk "${device##*/}"; then printf '%s\n' "$target"; fi
++done < /proc/mounts | sort -r | while read -r target; do
++    printf 'Unmounting %s\n' "$target"
++    umount "$target" || exit 1
++done
++sync
++echo 'All mounted filesystems on sda were unmounted normally.'
++    )ArKTPrepare";
++    if (Exec_Cmd(prepare_script) != 0) {
 +        gui_print("\nMSC preparation failed. Reboot Recovery before retrying.\n");
 +        return false;
 +    }
