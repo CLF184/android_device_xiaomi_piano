@@ -55,6 +55,11 @@ jobs:
       - name: Free disk space
         uses: rokibhasansagar/slimhub_actions@c2a6e4317d3de2b623ac7395b05e9d2149e8289b
 
+      - name: Install compressed workspace tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y btrfs-progs
+
       - name: Maximize build space
         uses: easimon/maximize-build-space@c28619d8999a147d5e09c1199f84ff6af6ad5794
         with:
@@ -62,6 +67,26 @@ jobs:
           remove-android: 'true'
           remove-haskell: 'true'
           remove-codeql: 'true'
+          remove-docker-images: 'true'
+          root-reserve-mb: '8192'
+          temp-reserve-mb: '4096'
+          # zram below supplies swap; keep only the minimum LVM swap volume.
+          swap-size-mb: '1'
+
+      - name: Use compressed temporary build volume
+        run: |
+          set -euo pipefail
+          BUILD_VOLUME=/dev/mapper/buildvg-buildlv
+          # This volume was just created above and checkout has not run yet.
+          test "$(readlink -f "$(findmnt -nr -o SOURCE -T "$GITHUB_WORKSPACE")")" = "$(readlink -f "$BUILD_VOLUME")"
+          test -z "$(find "$GITHUB_WORKSPACE" -mindepth 1 -maxdepth 1 ! -name lost+found -print -quit)"
+          sudo modprobe btrfs
+          sudo umount "$GITHUB_WORKSPACE"
+          sudo mkfs.btrfs -f "$BUILD_VOLUME"
+          sudo mount -o compress-force=zstd:3,noatime "$BUILD_VOLUME" "$GITHUB_WORKSPACE"
+          sudo chown runner:runner "$GITHUB_WORKSPACE"
+          df -h "$GITHUB_WORKSPACE" /
+          sudo btrfs filesystem usage "$GITHUB_WORKSPACE"
 
       # Checked out after maximize-build-space, which remounts the workspace
       # and discards anything already there.
