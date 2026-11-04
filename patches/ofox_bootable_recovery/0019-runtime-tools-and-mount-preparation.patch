@@ -1,0 +1,56 @@
+piano: check the required mapper tool before teardown and drop fixed ESP/WIN unmounts.
+
+The GPT command sequence is unchanged. All operations use the same shared
+piano preparation without Nabu-specific /win or /esp unmount handling.
+
+diff --git a/gui/action.cpp b/gui/action.cpp
+index bfb9e1b..7b2dccd 100644
+--- a/gui/action.cpp
++++ b/gui/action.cpp
+@@ -1912,11 +1912,13 @@ int GUIAction::fixgpt(std::string arg __unused)
+     gui_print("\nMass storage is enabled. Reboot Recovery before fixing GPT.\n");
+   } else if (access("/system/bin/gdisk", X_OK) != 0) {
+     gui_print("\ngdisk is unavailable. GPT was not changed.\n");
++  } else if (access("/system/bin/dmctl", X_OK) != 0) {
++    gui_print("\ndmctl is unavailable. GPT was not changed.\n");
+   } else if (TWFunc::CommonByArKT() && PartitionManager.Unmap_Super_Devices()) {
+     // Match the Nabu common preparation after releasing piano's secure stack.
+     const std::string prepare = R"FixGPT(
+ if [ -b /dev/block/mapper/userdata ]; then
+-    dmctl delete userdata || exit 1
++    /system/bin/dmctl delete userdata || exit 1
+ fi
+ while read -r source target rest; do
+     case "$source" in /dev/block/*) umount "$target" || exit 1 ;; esac
+diff --git a/twrp-functions.cpp b/twrp-functions.cpp
+index c4f0100..3f1dc72 100755
+--- a/twrp-functions.cpp
++++ b/twrp-functions.cpp
+@@ -5240,7 +5240,7 @@ static void ForceUnmountByArKT(const std::string& path) {
+     if (!actual_block.empty()) {
+         TWFunc::Exec_Cmd("umount " + actual_block + " >/dev/null 2>&1 || true");
+     }
+-    if (path == "/win" || path == "/esp" || path == "/metadata" || path == "/userdata") {
++    if (path == "/metadata" || path == "/userdata") {
+         TWFunc::Exec_Cmd("umount /dev/block/bootdevice/by-name" + path + " >/dev/null 2>&1 || true");
+     }
+ }
+@@ -5300,9 +5300,6 @@ echo 'All mounted filesystems on sda were unmounted normally.'
+         return false;
+     }
+ 
+-    ForceUnmountByArKT("/win");
+-    ForceUnmountByArKT("/esp");
+-
+     std::vector<PartitionList> mountable_parts;
+     PartitionManager.Get_Partition_List("mount", &mountable_parts);
+ 
+@@ -5311,7 +5308,7 @@ echo 'All mounted filesystems on sda were unmounted normally.'
+         if (part == nullptr) continue;
+ 
+         const std::string mp = part->Get_Mount_Point();
+-        if (mp == "/data" || mp == "/sdcard" || mp == "/metadata" || mp == "/win" || mp == "/esp") continue;
++        if (mp == "/data" || mp == "/sdcard" || mp == "/metadata") continue;
+ 
+         if (part->Actual_Block_Device.find("sda") != std::string::npos ||
+             part->Actual_Block_Device.find("bootdevice") != std::string::npos ||
