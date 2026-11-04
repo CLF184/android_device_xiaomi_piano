@@ -1,0 +1,16 @@
+Build dmctl's recovery variant for the Fix GPT mount/mapping preparation.
+
+The command was referenced by the repair action but absent from the image.
+Keep the AOSP implementation and enable its normal recovery variant.
+
+diff --git a/fs_mgr/tools/Android.bp b/fs_mgr/tools/Android.bp
+--- a/fs_mgr/tools/Android.bp
++++ b/fs_mgr/tools/Android.bp
+@@ -22,6 +22,7 @@
+ cc_binary {
+     name: "dmctl",
++    recovery_available: true,
+     srcs: ["dmctl.cpp"],
+ 
+     static_libs: [
+         "libfs_mgr",

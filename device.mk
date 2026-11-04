@@ -9,7 +9,7 @@
 DEVICE_PATH := device/xiaomi/piano
 
 # Interactive GPT fdisk for the Advanced > Fix GPT action.
-PRODUCT_PACKAGES += gdisk
+PRODUCT_PACKAGES += gdisk dmctl.recovery
 
 $(call inherit-product, $(SRC_TARGET_DIR)/product/base.mk)
 $(call inherit-product, $(SRC_TARGET_DIR)/product/core_64_bit_only.mk)

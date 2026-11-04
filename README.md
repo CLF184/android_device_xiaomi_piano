@@ -26,6 +26,10 @@ The action rejects active MSC and releases piano's crypto mounts and mappings
 before writing. Per-disk gdisk output and failures are shown in the operation
 log. Reboot Recovery afterwards before mounting partitions or enabling MSC.
 
+The image also includes `dmctl.recovery` for releasing the userdata mapper.
+Required tools are checked before mount teardown and in CI. The shared MSC/GPT
+preparation has no special `/esp` or `/win` unmount calls or path handling.
+
 `patches/external_gptfdisk/0001-build-gdisk-with-upstream-backup-table-move.patch`
 builds Android's existing gdisk sources and backports the upstream 1.0.10 `k`
 command. Apply it to AOSP `external/gptfdisk` at `android-16.0.0_r1`, then apply

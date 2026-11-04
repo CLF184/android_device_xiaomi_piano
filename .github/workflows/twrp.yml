@@ -143,6 +143,10 @@ jobs:
             git -C external/gptfdisk apply --check "$GITHUB_WORKSPACE/$patch"
             git -C external/gptfdisk apply "$GITHUB_WORKSPACE/$patch"
           done
+          for patch in "$DEVICE"/patches/system_core/*.patch; do
+            git -C system/core apply --check "$GITHUB_WORKSPACE/$patch"
+            git -C system/core apply "$GITHUB_WORKSPACE/$patch"
+          done
           git -C system/vold apply --check "$GITHUB_WORKSPACE/$DEVICE/patches/system_vold/0001-recovery-crypto-safety-invariants.patch"
           git -C system/vold apply "$GITHUB_WORKSPACE/$DEVICE/patches/system_vold/0001-recovery-crypto-safety-invariants.patch"
           git -C system/security apply --check "$GITHUB_WORKSPACE/$DEVICE/patches/system_security/0001-recovery-keymint-mutation-policy.patch"
@@ -195,6 +199,7 @@ jobs:
           grep -aFq 'mscbyarkt' "$ROOT/system/bin/recovery"
           grep -aFq 'fixgpt' "$ROOT/system/bin/recovery"
           test -x "$ROOT/system/bin/gdisk"
+          test -x "$ROOT/system/bin/dmctl"
           grep -aFq 'move the backup partition table' "$ROOT/system/bin/gdisk"
           grep -RFq 'tw_action=fixgpt' "$ROOT/twres"
 
@@ -217,7 +222,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "twrp-gpt-${{ github.run_id }}-${{ github.run_attempt }}" artifacts/* --repo "${{ github.repository }}" --target "${{ github.sha }}" --prerelease --title "TWRP - piano - Fix GPT" --notes "Source: ${{ github.sha }}. Adds Advanced > Fix GPT using the Nabu gdisk x/j/k/w sequence on existing sda-sdf disks, with runtime geometry and piano mount preparation. GPT regression tests passed on six disposable 4K-sector disks; partition entries and payload were preserved and repeat runs were identical. Native Android 16 build; image invariants, ELF closure and AVB signature audited. Signed with a disposable CI AVB key. Not flashed or executed on a physical tablet."
+          gh release create "twrp-gpt-${{ github.run_id }}-${{ github.run_attempt }}" artifacts/* --repo "${{ github.repository }}" --target "${{ github.sha }}" --prerelease --title "TWRP - piano - Fix GPT" --notes "Source: ${{ github.sha }}. Fixes the missing dmctl runtime dependency and removes all ESP/WIN-specific unmount handling. Advanced > Fix GPT uses the Nabu gdisk x/j/k/w sequence on existing sda-sdf disks with runtime geometry. Six disposable 4K-sector regression layouts passed CRC, partition-entry/payload preservation and repeat-execution checks. Image invariants, ELF closure, packaged gdisk/dmctl and AVB signature audited. Signed with a disposable CI AVB key. GPT writes have not been tested on a physical tablet."
 
       - name: Remove disposable CI AVB key
         if: always()
