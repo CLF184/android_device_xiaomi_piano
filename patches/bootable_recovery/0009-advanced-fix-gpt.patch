@@ -1,0 +1,161 @@
+piano: add Advanced > Fix GPT using the Nabu x/j/k/w command sequence.
+
+Run through the normal confirmation/worker action, release piano's existing
+crypto mounts and mappings, reject active MSC, and report each gdisk result.
+No stock partition templates or device-specific sector constants are used.
+
+diff --git a/gui/action.cpp b/gui/action.cpp
+index 71c2732..12f022d 100644
+--- a/gui/action.cpp
++++ b/gui/action.cpp
+@@ -220,6 +220,7 @@ GUIAction::GUIAction(rapidxml::xml_node<>* node)
+ 		ADD_ACTION(dd);
+ 		ADD_ACTION(partitionsd);
+ 		ADD_ACTION(cmd);
++		ADD_ACTION(fixgpt);
+ 		ADD_ACTION(terminalcommand);
+ 		ADD_ACTION(decrypt);
+ 		ADD_ACTION(adbsideload);
+@@ -1305,6 +1306,58 @@ int GUIAction::fixcontexts(std::string arg __unused)
+ 	return 0;
+ }
+ 
++int GUIAction::fixgpt(std::string arg __unused)
++{
++	operation_start("Fix GPT");
++	int op_status = 1;
++	if (simulate) {
++		simulate_progress_bar();
++		op_status = 0;
++	} else if (access(ARKT_MSC_MARKER_PATH, F_OK) == 0) {
++		gui_print("\nMass storage is enabled. Reboot Recovery before fixing GPT.\n");
++	} else if (access("/system/bin/gdisk", X_OK) != 0) {
++		gui_print("\ngdisk is unavailable. GPT was not changed.\n");
++	} else if (TWFunc::CommonByArKT() && PartitionManager.Unmap_Super_Devices()) {
++		// Match the Nabu common preparation after releasing piano's secure stack.
++		const std::string prepare = R"FixGPT(
++if [ -b /dev/block/mapper/userdata ]; then
++    dmctl delete userdata || exit 1
++fi
++while read -r source target rest; do
++    case "$source" in /dev/block/*) umount "$target" || exit 1 ;; esac
++done < /proc/mounts
++sync
++)FixGPT";
++		if (TWFunc::Exec_Cmd(prepare) == 0) {
++			bool found = false;
++			op_status = 0;
++			for (char suffix = 'a'; suffix <= 'f'; ++suffix) {
++				const std::string device = std::string("/dev/block/sd") + suffix;
++				struct stat st;
++				if (stat(device.c_str(), &st) != 0 || !S_ISBLK(st.st_mode))
++					continue;
++				found = true;
++				gui_print("\nFixing GPT on %s...\n", device.c_str());
++				std::string output;
++				const int result = TWFunc::Exec_Cmd(
++					"printf 'x\\nj\\n\\nk\\n\\nw\\nY\\n' | /system/bin/gdisk " + device,
++					output, true);
++				gui_print("%s", output.c_str());
++				if (result != 0 || output.find("The operation has completed successfully.") == std::string::npos)
++					op_status = 1;
++			}
++			if (!found)
++				op_status = 1;
++			sync();
++		} else {
++			gui_print("\nUnable to release mounted partitions. GPT was not changed.\n");
++		}
++		gui_print("\nReboot Recovery before mounting partitions or using mass storage.\n");
++	}
++	operation_end(op_status);
++	return 0;
++}
++
+ int GUIAction::fixpermissions(std::string arg)
+ {
+ 	return fixcontexts(arg);
+diff --git a/gui/objects.hpp b/gui/objects.hpp
+index a6e37da..f7cce45 100644
+--- a/gui/objects.hpp
++++ b/gui/objects.hpp
+@@ -324,6 +324,7 @@ protected:
+ 	int clear(std::string arg);
+ 	int mount(std::string arg);
+ 	int mscbyarkt(std::string arg);
++	int fixgpt(std::string arg);
+ 	int unmount(std::string arg);
+ 	int restoredefaultsettings(std::string arg);
+ 	int copylog(std::string arg);
+diff --git a/gui/theme/common/landscape.xml b/gui/theme/common/landscape.xml
+index 8a6facd..0df2863 100755
+--- a/gui/theme/common/landscape.xml
++++ b/gui/theme/common/landscape.xml
+@@ -3677,6 +3677,17 @@
+ 				<listitem name="{@piano_msc_enable=Enable USB Mass Storage}">
+ 					<action function="mscbyarkt"/>
+ 				</listitem>
++				<listitem name="{@piano_fix_gpt=Fix GPT}">
++					<actions>
++						<action function="set">tw_back=advanced</action>
++						<action function="set">tw_action=fixgpt</action>
++						<action function="set">tw_text1={@piano_fix_gpt_confirm=Fix GPT on internal disks?}</action>
++						<action function="set">tw_action_text1={@piano_fixing_gpt=Fixing GPT...}</action>
++						<action function="set">tw_complete_text1={@piano_fix_gpt_complete=GPT operation complete}</action>
++						<action function="set">tw_slider_text={@swipe_to_confirm=Swipe to Confirm}</action>
++						<action function="page">confirm_action</action>
++					</actions>
++				</listitem>
+ 				<listitem name="{@change_twrp_folder_btn=Change TWRP folder}">
+ 					<condition var1="tw_is_decrypted" var2="1"/>
+ 					<action function="page">changeTwrpFolder</action>
+diff --git a/gui/theme/common/languages/en.xml b/gui/theme/common/languages/en.xml
+index af9f393..0dcce72 100755
+--- a/gui/theme/common/languages/en.xml
++++ b/gui/theme/common/languages/en.xml
+@@ -786,5 +786,9 @@
+ 		<string name="select_wlan_hdr">Select WLAN to Connect</string>
+ 		<string name="next_btn">Next</string>
+ 		<string name="piano_msc_enable">Enable USB Mass Storage</string>
++		<string name="piano_fix_gpt">Fix GPT</string>
++		<string name="piano_fix_gpt_confirm">Fix GPT on internal disks?</string>
++		<string name="piano_fixing_gpt">Fixing GPT...</string>
++		<string name="piano_fix_gpt_complete">GPT operation complete</string>
+ 	</resources>
+ </language>
+diff --git a/gui/theme/common/portrait.xml b/gui/theme/common/portrait.xml
+index 121667c..0907dd7 100755
+--- a/gui/theme/common/portrait.xml
++++ b/gui/theme/common/portrait.xml
+@@ -3981,6 +3981,17 @@
+ 				<listitem name="{@piano_msc_enable=Enable USB Mass Storage}">
+ 					<action function="mscbyarkt"/>
+ 				</listitem>
++				<listitem name="{@piano_fix_gpt=Fix GPT}">
++					<actions>
++						<action function="set">tw_back=advanced</action>
++						<action function="set">tw_action=fixgpt</action>
++						<action function="set">tw_text1={@piano_fix_gpt_confirm=Fix GPT on internal disks?}</action>
++						<action function="set">tw_action_text1={@piano_fixing_gpt=Fixing GPT...}</action>
++						<action function="set">tw_complete_text1={@piano_fix_gpt_complete=GPT operation complete}</action>
++						<action function="set">tw_slider_text={@swipe_to_confirm=Swipe to Confirm}</action>
++						<action function="page">confirm_action</action>
++					</actions>
++				</listitem>
+ 				<listitem name="{@change_twrp_folder_btn=Change TWRP folder}">
+ 					<condition var1="tw_is_decrypted" var2="1"/>
+ 					<action function="page">changeTwrpFolder</action>
+diff --git a/gui/theme/extra-languages/languages/zh_CN.xml b/gui/theme/extra-languages/languages/zh_CN.xml
+index 5ed2f5b..52f631d 100644
+--- a/gui/theme/extra-languages/languages/zh_CN.xml
++++ b/gui/theme/extra-languages/languages/zh_CN.xml
+@@ -778,5 +778,9 @@
+ 		<string name="select_wlan_hdr">选择需要连接的WiFi</string>
+ 		<string name="next_btn">下一步</string>
+ 		<string name="piano_msc_enable">开启 USB 大容量存储</string>
++		<string name="piano_fix_gpt">修复 GPT</string>
++		<string name="piano_fix_gpt_confirm">修复内部磁盘的 GPT 分区表？</string>
++		<string name="piano_fixing_gpt">正在修复 GPT...</string>
++		<string name="piano_fix_gpt_complete">GPT 操作完成</string>
+ 	</resources>
+ </language>

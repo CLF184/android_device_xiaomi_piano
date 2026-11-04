@@ -14,6 +14,28 @@ The new source patch is `patches/bootable_recovery/0008-arkt-mass-storage.patch`
 apply it after the existing patches when building this branch. This changes
 the recovery sources, not the ramdisk-only boot format or the ROM kernel.
 
+## Fix GPT
+
+In **Advanced**, tap **Fix GPT** and use the normal confirmation slider.
+The action runs ArKT's Nabu `x / j / Enter / k / Enter / w / Y` gdisk sequence
+on each existing `/dev/block/sda` through `/dev/block/sdf`. It reads the current
+GPT and sector size at runtime; no piano partition template or fixed offsets
+are installed. Existing partition entries and filesystem contents are retained.
+
+The action rejects active MSC and releases piano's crypto mounts and mappings
+before writing. Per-disk gdisk output and failures are shown in the operation
+log. Reboot Recovery afterwards before mounting partitions or enabling MSC.
+
+`patches/external_gptfdisk/0001-build-gdisk-with-upstream-backup-table-move.patch`
+builds Android's existing gdisk sources and backports the upstream 1.0.10 `k`
+command. Apply it to AOSP `external/gptfdisk` at `android-16.0.0_r1`, then apply
+the complete `patches/bootable_recovery/` queue, including `0009`.
+
+The CI regression test uses disposable 4096-byte-sector loop disks matching
+the six piano GPT table sizes and gaps. It checks both GPT copies, CRCs,
+partition entries, payload preservation and repeat execution. It does not
+exercise the action on a physical tablet.
+
 Path:
 
 ```text
