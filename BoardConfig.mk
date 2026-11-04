@@ -215,6 +215,9 @@ TW_SKIP_ADDITIONAL_FSTAB := true
 # Dynamic partition / fastbootd support
 TW_INCLUDE_FASTBOOTD := true
 
+# Use the recovery's existing dmctl/dmuserd packaging for mapper teardown.
+TW_USE_DMCTL := true
+
 # Size discipline. Both public SM8750 reference trees set this; it removes the
 # stock-APEX loading integration. It is not a blanket "remove all APEX"
 # switch, so the ELF closure is verified separately.

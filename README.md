@@ -29,8 +29,9 @@ The latter builds Android's gdisk and backports the upstream 1.0.10 `k` command
 and its last-used-LBA helper. Reboot Recovery after the operation before
 mounting partitions or enabling MSC.
 
-`dmctl.recovery` is included for releasing the userdata mapper and is checked
-before teardown and in CI. Shared MSC/GPT preparation contains no special
+The upstream `TW_USE_DMCTL := true` option includes dmctl/dmuserd through the
+existing recovery packaging. dmctl is checked before teardown and in CI.
+Shared MSC/GPT preparation contains no special
 `/esp` or `/win` unmount calls, by-name branches or path handling.
 
 The CI workflow first tests six disposable 4K-sector disks, checking both GPT
