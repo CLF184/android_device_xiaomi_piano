@@ -10,7 +10,7 @@ on:
 env:
   DEVICE_PATH: device/xiaomi/piano
   DEVICE_NAME: piano
-  SOURCE_SHA: 07abdb7e9de719bb9e3282feca80241ee5363924
+  SOURCE_SHA: 8aa37fc6002c35189981564dfb5d7ca76c90fd3e
 
 jobs:
   gpt-test:
@@ -125,6 +125,7 @@ jobs:
           cp "$GITHUB_WORKSPACE"/device_tree/manifests/*.xml .repo/local_manifests/
           (while true; do echo "$(date +%T) syncing..."; sleep 60; done) &
           TIP=$!
+          trap 'kill "$TIP" 2>/dev/null || true' EXIT
           repo sync -c -j$(nproc) --no-clone-bundle --no-tags --force-sync
           kill $TIP || true
           git clone --depth=1 -b fox_16.0 https://gitlab.com/OrangeFox/vendor/recovery.git vendor/recovery
@@ -176,6 +177,7 @@ jobs:
           lunch twrp_piano-bp2a-eng
           (while true; do echo "$(date +%T) building..."; free -h | sed -n 2p; sleep 30; done) &
           TIP=$!
+          trap 'kill "$TIP" 2>/dev/null || true' EXIT
           m recoveryimage -j$(nproc)
           kill $TIP || true
 
@@ -195,6 +197,7 @@ jobs:
           grep -aFq 'fixgpt' "$ROOT/system/bin/recovery"
           test -x "$ROOT/system/bin/gdisk"
           test -x "$ROOT/system/bin/dmctl"
+          test -x "$ROOT/system/bin/dmuserd"
           grep -aFq 'move the backup partition table' "$ROOT/system/bin/gdisk"
           grep -RFq 'tw_action=fixgpt' "$ROOT/twres"
 
