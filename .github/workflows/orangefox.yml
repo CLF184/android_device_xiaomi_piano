@@ -1,6 +1,6 @@
 name: OrangeFox R12 Builder (piano)
 
-# Builds the published MSC source branch with the upstream build recipe.
+# Builds the pinned OrangeFox GPT source revision with the upstream recipe.
 on:
   push:
     branches: [ci/recovery-msc-builds]
@@ -10,9 +10,44 @@ on:
 env:
   DEVICE_PATH: device/xiaomi/piano
   DEVICE_NAME: piano
+  SOURCE_SHA: 3645d32aa43e3dd85beb077a376a2cbe18bd496e
 
 jobs:
+  gpt-test:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - name: Check out GPT feature
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ env.SOURCE_SHA }}
+
+      - name: Prepare GPT test sources
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y g++ uuid-dev
+          git clone --depth=1 --branch android-16.0.0_r1 https://android.googlesource.com/platform/external/gptfdisk "$RUNNER_TEMP/gptfdisk"
+          test "$(git -C "$RUNNER_TEMP/gptfdisk" rev-parse HEAD)" = 80eee0e7ee4ddebc6b5948d8eb555d356ac00f58
+          for patch in "$GITHUB_WORKSPACE"/patches/external_gptfdisk/*.patch; do
+            git -C "$RUNNER_TEMP/gptfdisk" apply --check "$patch"
+            git -C "$RUNNER_TEMP/gptfdisk" apply "$patch"
+          done
+
+      - name: Gate - GPT repair on disposable 4K-sector disks
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/gptfdisk"
+          g++ -O2 -D_FILE_OFFSET_BITS=64 gdisk.cc gpttext.cc crc32.cc support.cc \
+            guid.cc gptpart.cc mbrpart.cc basicmbr.cc mbr.cc gpt.cc bsd.cc \
+            parttypes.cc attributes.cc diskio.cc diskio-unix.cc -luuid \
+            -o "$RUNNER_TEMP/piano-gdisk"
+          cd "$GITHUB_WORKSPACE"
+          sudo python3 tools/verify-fixgpt.py "$RUNNER_TEMP/piano-gdisk"
+
   build:
+    needs: gpt-test
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -34,7 +69,7 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           path: device_tree
-          ref: cfe2bb3f1ed6ad48a7a063f8e3cb805bb24f9043
+          ref: ${{ env.SOURCE_SHA }}
 
       - name: Setup ccache
         uses: hendrikmuhs/ccache-action@5ebbd400eff9e74630f759d94ddd7b6c26299639
@@ -127,22 +162,27 @@ jobs:
       - name: Gate - ELF closure
         run: python3 "$DEVICE_PATH/tools/piano16-elf-closure-audit.py" "out/target/product/$DEVICE_NAME/recovery.img"
 
-      - name: Verify AVB signature and MSC binary
+      - name: Verify AVB signature and GPT action
         run: |
           python3 external/avb/avbtool.py verify_image --image out/target/product/piano/recovery.img --key device/xiaomi/piano/security/recovery_avb.pem
-          grep -aFq 'mscbyarkt' out/target/product/piano/recovery/root/system/bin/recovery
+          ROOT=out/target/product/piano/recovery/root
+          grep -aFq 'mscbyarkt' "$ROOT/system/bin/recovery"
+          grep -aFq 'fixgpt' "$ROOT/system/bin/recovery"
+          test -x "$ROOT/system/bin/gdisk"
+          grep -aFq 'move the backup partition table' "$ROOT/system/bin/gdisk"
+          grep -RFq 'tw_action=fixgpt' "$ROOT/twres"
 
       - name: Collect audited image
         run: |
           mkdir -p artifacts
-          cp out/target/product/piano/recovery.img artifacts/orangefox-MSC-piano.img
+          cp out/target/product/piano/recovery.img artifacts/orangefox-GPT-piano.img
           cd artifacts
           sha256sum *.img > SHA256SUMS
 
       - name: Upload artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: orangefox-MSC-piano
+          name: orangefox-GPT-piano
           path: artifacts/
           retention-days: 14
           if-no-files-found: error
@@ -151,7 +191,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "orangefox-msc-${{ github.run_id }}-${{ github.run_attempt }}" artifacts/* --repo "${{ github.repository }}" --target "cfe2bb3f1ed6ad48a7a063f8e3cb805bb24f9043" --prerelease --title "orangefox MSC - piano" --notes "Source: cfe2bb3f1ed6ad48a7a063f8e3cb805bb24f9043. ArKT MSC entry in Advanced with piano USB/unmount fixes. Native Android 16 build; image structure, ELF closure and AVB signature audited. Signed with a disposable CI AVB key. USB setup was verified on piano with read-only MSC and ADB; this rebuilt image and writable MSC still require device validation."
+          gh release create "orangefox-gpt-${{ github.run_id }}-${{ github.run_attempt }}" artifacts/* --repo "${{ github.repository }}" --target "$SOURCE_SHA" --prerelease --title "OrangeFox - piano - Fix GPT" --notes "Source: $SOURCE_SHA. Adds Advanced > Fix GPT with the same Nabu gdisk x/j/k/w sequence and piano mount preparation as the TWRP GPT build. Operates on existing sda-sdf disks using runtime GPT geometry. Six disposable 4K-sector regression layouts passed CRC, partition-entry/payload preservation and repeat-execution checks. Native Android 16 image; image invariants, ELF closure, packaged action/tool and AVB signature audited. Signed with a disposable CI AVB key. Not flashed or executed on a physical tablet."
 
       - name: Remove disposable CI AVB key
         if: always()
