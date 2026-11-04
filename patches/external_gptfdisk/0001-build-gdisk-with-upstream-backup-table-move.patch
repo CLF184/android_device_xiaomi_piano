@@ -42,7 +42,7 @@ index c1894e9..d8bf0f4 100644
      "gptcl.cc",
      "crc32.cc",
 diff --git a/gpt.cc b/gpt.cc
-index e8e0878..e7bafab 100644
+index e8e0878..418ded3 100644
 --- a/gpt.cc
 +++ b/gpt.cc
 @@ -1917,6 +1917,23 @@ int GPTData::MoveMainTable(uint64_t pteSector) {
@@ -69,8 +69,29 @@ index e8e0878..e7bafab 100644
  // Blank the partition array
  void GPTData::BlankPartitions(void) {
     uint32_t i;
+@@ -2304,6 +2321,20 @@ uint64_t GPTData::FindFirstUsedLBA(void) {
+     return firstFound;
+ } // GPTData::FindFirstUsedLBA()
+ 
++// Returns the LBA of the end of the last partition on the disk (by
++// sector number), or 0 if there are no partitions defined (GPT fdisk 1.0.10).
++uint64_t GPTData::FindLastUsedLBA(void) {
++   uint32_t i;
++   uint64_t lastFound = 0;
++
++   for (i = 0; i < numParts; i++) {
++      if ((partitions[i].IsUsed()) && (partitions[i].GetFirstLBA() > lastFound)) {
++         lastFound = partitions[i].GetLastLBA();
++      }
++   }
++   return lastFound;
++}
++
+ // Finds the first available sector in the largest block of unallocated
+ // space on the disk. Returns 0 if there are no available blocks left
+ uint64_t GPTData::FindFirstInLargest(void) {
 diff --git a/gpt.h b/gpt.h
-index 6e1e0bb..f538822 100644
+index 6e1e0bb..5d24c1c 100644
 --- a/gpt.h
 +++ b/gpt.h
 @@ -143,6 +143,7 @@ public:
@@ -81,6 +102,14 @@ index 6e1e0bb..f538822 100644
     void BlankPartitions(void);
     int DeletePartition(uint32_t partNum);
     uint32_t CreatePartition(uint32_t partNum, uint64_t startSector, uint64_t endSector);
+@@ -182,6 +183,7 @@ public:
+    // Find information about free space
+    uint64_t FindFirstAvailable(uint64_t start = 0);
+    uint64_t FindFirstUsedLBA(void);
++   uint64_t FindLastUsedLBA(void);
+    uint64_t FindFirstInLargest(void);
+    uint64_t FindLastAvailable();
+    uint64_t FindLastInFree(uint64_t start, bool align = false);
 diff --git a/gpttext.cc b/gpttext.cc
 index 170a169..5934203 100644
 --- a/gpttext.cc

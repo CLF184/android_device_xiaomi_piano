@@ -8,7 +8,39 @@ on:
   workflow_dispatch:
 
 jobs:
+  gpt-test:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - name: Check out GPT feature
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - name: Prepare GPT test sources
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y g++ uuid-dev
+          git clone --depth=1 --branch android-16.0.0_r1 https://android.googlesource.com/platform/external/gptfdisk "$RUNNER_TEMP/gptfdisk"
+          test "$(git -C "$RUNNER_TEMP/gptfdisk" rev-parse HEAD)" = 80eee0e7ee4ddebc6b5948d8eb555d356ac00f58
+          for patch in "$GITHUB_WORKSPACE"/patches/external_gptfdisk/*.patch; do
+            git -C "$RUNNER_TEMP/gptfdisk" apply --check "$patch"
+            git -C "$RUNNER_TEMP/gptfdisk" apply "$patch"
+          done
+
+      - name: Gate - GPT repair on disposable 4K-sector disks
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/gptfdisk"
+          g++ -O2 -D_FILE_OFFSET_BITS=64 gdisk.cc gpttext.cc crc32.cc support.cc \
+            guid.cc gptpart.cc mbrpart.cc basicmbr.cc mbr.cc gpt.cc bsd.cc \
+            parttypes.cc attributes.cc diskio.cc diskio-unix.cc -luuid \
+            -o "$RUNNER_TEMP/piano-gdisk"
+          cd "$GITHUB_WORKSPACE"
+          sudo python3 tools/verify-fixgpt.py "$RUNNER_TEMP/piano-gdisk"
+
   build:
+    needs: gpt-test
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -117,17 +149,6 @@ jobs:
           git -C system/security apply "$GITHUB_WORKSPACE/$DEVICE/patches/system_security/0001-recovery-keymint-mutation-policy.patch"
           git -C vendor/twrp apply --check "$GITHUB_WORKSPACE/$DEVICE/patches/vendor_twrp/0001-export-crypto-flags-to-soong.patch"
           git -C vendor/twrp apply "$GITHUB_WORKSPACE/$DEVICE/patches/vendor_twrp/0001-export-crypto-flags-to-soong.patch"
-
-      - name: Gate - GPT repair on disposable 4K-sector disks
-        run: |
-          set -euo pipefail
-          cd external/gptfdisk
-          g++ -O2 -D_FILE_OFFSET_BITS=64 gdisk.cc gpttext.cc crc32.cc support.cc \
-            guid.cc gptpart.cc mbrpart.cc basicmbr.cc mbr.cc gpt.cc bsd.cc \
-            parttypes.cc attributes.cc diskio.cc diskio-unix.cc -luuid \
-            -o "$RUNNER_TEMP/piano-gdisk"
-          cd "$GITHUB_WORKSPACE"
-          sudo python3 device/xiaomi/piano/tools/verify-fixgpt.py "$RUNNER_TEMP/piano-gdisk"
 
       - name: Add QTI boot control
         run: |
