@@ -26,7 +26,8 @@ The action rejects active MSC and releases piano's crypto mounts and mappings
 before writing. Per-disk gdisk output and failures are shown in the operation
 log. Reboot Recovery afterwards before mounting partitions or enabling MSC.
 
-The image also includes `dmctl.recovery` for releasing the userdata mapper.
+The upstream `TW_USE_DMCTL := true` option includes dmctl/dmuserd through the
+recovery's existing modules for releasing the userdata mapper.
 Required tools are checked before mount teardown and in CI. The shared MSC/GPT
 preparation has no special `/esp` or `/win` unmount calls or path handling.
 

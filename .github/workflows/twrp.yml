@@ -143,10 +143,6 @@ jobs:
             git -C external/gptfdisk apply --check "$GITHUB_WORKSPACE/$patch"
             git -C external/gptfdisk apply "$GITHUB_WORKSPACE/$patch"
           done
-          for patch in "$DEVICE"/patches/system_core/*.patch; do
-            git -C system/core apply --check "$GITHUB_WORKSPACE/$patch"
-            git -C system/core apply "$GITHUB_WORKSPACE/$patch"
-          done
           git -C system/vold apply --check "$GITHUB_WORKSPACE/$DEVICE/patches/system_vold/0001-recovery-crypto-safety-invariants.patch"
           git -C system/vold apply "$GITHUB_WORKSPACE/$DEVICE/patches/system_vold/0001-recovery-crypto-safety-invariants.patch"
           git -C system/security apply --check "$GITHUB_WORKSPACE/$DEVICE/patches/system_security/0001-recovery-keymint-mutation-policy.patch"
