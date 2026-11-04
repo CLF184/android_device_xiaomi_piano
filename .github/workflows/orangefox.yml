@@ -10,7 +10,7 @@ on:
 env:
   DEVICE_PATH: device/xiaomi/piano
   DEVICE_NAME: piano
-  SOURCE_SHA: 3645d32aa43e3dd85beb077a376a2cbe18bd496e
+  SOURCE_SHA: 07abdb7e9de719bb9e3282feca80241ee5363924
 
 jobs:
   gpt-test:
@@ -169,6 +169,7 @@ jobs:
           grep -aFq 'mscbyarkt' "$ROOT/system/bin/recovery"
           grep -aFq 'fixgpt' "$ROOT/system/bin/recovery"
           test -x "$ROOT/system/bin/gdisk"
+          test -x "$ROOT/system/bin/dmctl"
           grep -aFq 'move the backup partition table' "$ROOT/system/bin/gdisk"
           grep -RFq 'tw_action=fixgpt' "$ROOT/twres"
 
@@ -191,7 +192,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "orangefox-gpt-${{ github.run_id }}-${{ github.run_attempt }}" artifacts/* --repo "${{ github.repository }}" --target "$SOURCE_SHA" --prerelease --title "OrangeFox - piano - Fix GPT" --notes "Source: $SOURCE_SHA. Adds Advanced > Fix GPT with the same Nabu gdisk x/j/k/w sequence and piano mount preparation as the TWRP GPT build. Operates on existing sda-sdf disks using runtime GPT geometry. Six disposable 4K-sector regression layouts passed CRC, partition-entry/payload preservation and repeat-execution checks. Native Android 16 image; image invariants, ELF closure, packaged action/tool and AVB signature audited. Signed with a disposable CI AVB key. Not flashed or executed on a physical tablet."
+          gh release create "orangefox-gpt-${{ github.run_id }}-${{ github.run_attempt }}" artifacts/* --repo "${{ github.repository }}" --target "$SOURCE_SHA" --prerelease --title "OrangeFox - piano - Fix GPT" --notes "Source: $SOURCE_SHA. Includes the required dmctl runtime dependency and removes all ESP/WIN-specific unmount handling. Advanced > Fix GPT uses the same Nabu gdisk x/j/k/w sequence and piano preparation as the TWRP build, with runtime geometry on existing sda-sdf disks. Six disposable 4K-sector layouts passed CRC, partition-entry/payload preservation and repeat-execution checks. Image invariants, ELF closure, packaged gdisk/dmctl and AVB signature audited. Signed with a disposable CI AVB key. GPT writes have not been tested on a physical tablet."
 
       - name: Remove disposable CI AVB key
         if: always()
