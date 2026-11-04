@@ -25,6 +25,7 @@ apply_dir() {
 
 apply_dir bootable/recovery ofox_bootable_recovery
 apply_dir system/core ofox_system_core
+apply_dir external/gptfdisk external_gptfdisk
 
 # Maintainer photo for the About page.
 cp "$PATCHES/../theme/maintainer.png" "$ROOT/bootable/recovery/gui/theme/portrait_hdpi/images/Default/About/maintainer.png"

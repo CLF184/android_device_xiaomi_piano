@@ -1,0 +1,173 @@
+Build Android gdisk and backport its k command from GPT fdisk 1.0.10.
+
+Base: AOSP android-16.0.0_r1, commit 80eee0e7ee4ddebc6b5948d8eb555d356ac00f58.
+The existing j command is retained; k uses upstream MoveSecondTable and its
+interactive default so the Nabu x/j/k/w sequence works on 4096-byte sectors.
+
+diff --git a/Android.bp b/Android.bp
+index c1894e9..d8bf0f4 100644
+--- a/Android.bp
++++ b/Android.bp
+@@ -64,6 +64,32 @@ cc_binary {
+     ],
+ }
+ 
++// Interactive gdisk is needed by the upstream x/j/k/w fixgpt sequence.
++// Compile the existing Android sources and the 1.0.10 k-command backport.
++cc_binary {
++    name: "gdisk",
++    defaults: ["gptfdisk_default_flags"],
++    recovery: true,
++    srcs: [
++        "gdisk.cc",
++        "gpttext.cc",
++        "crc32.cc",
++        "support.cc",
++        "guid.cc",
++        "gptpart.cc",
++        "mbrpart.cc",
++        "basicmbr.cc",
++        "mbr.cc",
++        "gpt.cc",
++        "bsd.cc",
++        "parttypes.cc",
++        "attributes.cc",
++        "diskio.cc",
++        "diskio-unix.cc",
++    ],
++    shared_libs: ["libext2_uuid"],
++}
++
+ lib_common_srcs = [
+     "gptcl.cc",
+     "crc32.cc",
+diff --git a/gpt.cc b/gpt.cc
+index e8e0878..418ded3 100644
+--- a/gpt.cc
++++ b/gpt.cc
+@@ -1917,6 +1917,23 @@ int GPTData::MoveMainTable(uint64_t pteSector) {
+     return retval;
+ } // GPTData::MoveMainTable()
+ 
++// Change the start sector for the secondary partition table.
++// Backported from GPT fdisk 1.0.10 for the recovery fixgpt command sequence.
++int GPTData::MoveSecondTable(uint64_t pteSector) {
++   uint64_t pteSize = GetTableSizeInSectors();
++   int retval = 1;
++
++   if ((pteSector > FindLastUsedLBA()) && ((pteSector + pteSize) < diskSize)) {
++      secondHeader.partitionEntriesLBA = pteSector;
++      mainHeader.lastUsableLBA = secondHeader.partitionEntriesLBA - UINT64_C(1);
++      RebuildSecondHeader();
++   } else {
++      cerr << "Unable to set the secondary partition table's location to " << pteSector << "!\n";
++      retval = 0;
++   }
++   return retval;
++}
++
+ // Blank the partition array
+ void GPTData::BlankPartitions(void) {
+    uint32_t i;
+@@ -2304,6 +2321,20 @@ uint64_t GPTData::FindFirstUsedLBA(void) {
+     return firstFound;
+ } // GPTData::FindFirstUsedLBA()
+ 
++// Returns the LBA of the end of the last partition on the disk (by
++// sector number), or 0 if there are no partitions defined (GPT fdisk 1.0.10).
++uint64_t GPTData::FindLastUsedLBA(void) {
++   uint32_t i;
++   uint64_t lastFound = 0;
++
++   for (i = 0; i < numParts; i++) {
++      if ((partitions[i].IsUsed()) && (partitions[i].GetFirstLBA() > lastFound)) {
++         lastFound = partitions[i].GetLastLBA();
++      }
++   }
++   return lastFound;
++}
++
+ // Finds the first available sector in the largest block of unallocated
+ // space on the disk. Returns 0 if there are no available blocks left
+ uint64_t GPTData::FindFirstInLargest(void) {
+diff --git a/gpt.h b/gpt.h
+index 6e1e0bb..5d24c1c 100644
+--- a/gpt.h
++++ b/gpt.h
+@@ -143,6 +143,7 @@ public:
+    // Adjust GPT structures WITHOUT user interaction...
+    int SetGPTSize(uint32_t numEntries, int fillGPTSectors = 1);
+    int MoveMainTable(uint64_t pteSector);
++   int MoveSecondTable(uint64_t pteSector);
+    void BlankPartitions(void);
+    int DeletePartition(uint32_t partNum);
+    uint32_t CreatePartition(uint32_t partNum, uint64_t startSector, uint64_t endSector);
+@@ -182,6 +183,7 @@ public:
+    // Find information about free space
+    uint64_t FindFirstAvailable(uint64_t start = 0);
+    uint64_t FindFirstUsedLBA(void);
++   uint64_t FindLastUsedLBA(void);
+    uint64_t FindFirstInLargest(void);
+    uint64_t FindLastAvailable();
+    uint64_t FindLastInFree(uint64_t start, bool align = false);
+diff --git a/gpttext.cc b/gpttext.cc
+index 170a169..5934203 100644
+--- a/gpttext.cc
++++ b/gpttext.cc
+@@ -197,6 +197,26 @@ void GPTDataTextUI::MoveMainTable(void) {
+     } // if
+ } // GPTDataTextUI::MoveMainTable()
+ 
++// Move the backup partition table (GPT fdisk 1.0.10).
++void GPTDataTextUI::MoveSecondTable(void) {
++    uint64_t newStart, pteSize = GetTableSizeInSectors();
++    uint64_t minValue = FindLastUsedLBA() + 1;
++    uint64_t maxValue = diskSize - 1 - pteSize;
++    ostringstream prompt;
++
++    cout << "Currently, backup partition table begins at sector " << secondHeader.partitionEntriesLBA
++         << " and ends at\n"
++         << "sector " << secondHeader.partitionEntriesLBA + pteSize - 1 << "\n";
++    prompt << "Enter new starting location (" << minValue << " to " << maxValue <<
++              "; default is " << maxValue << "; 1 to abort): ";
++    newStart = GetNumber(minValue, maxValue, maxValue, prompt.str());
++    if (newStart != secondHeader.partitionEntriesLBA) {
++        GPTData::MoveSecondTable(newStart);
++    } else {
++        cout << "Aborting change!\n";
++    }
++}
++
+ // Interactively create a partition
+ void GPTDataTextUI::CreatePartition(void) {
+    uint64_t firstBlock, firstInLargest, lastBlock, sector, origSector, lastAligned;
+@@ -873,6 +893,9 @@ void GPTDataTextUI::ExpertsMenu(string filename) {
+          case 'j': case 'J':
+              MoveMainTable();
+              break;
++         case 'k': case 'K':
++             MoveSecondTable();
++             break;
+          case 'l': case 'L':
+             prompt.seekp(0);
+             prompt << "Enter the sector alignment value (1-" << MAX_ALIGNMENT << ", default = "
+@@ -946,6 +969,7 @@ void GPTDataTextUI::ShowExpertCommands(void) {
+    cout << "h\trecompute CHS values in protective/hybrid MBR\n";
+    cout << "i\tshow detailed information on a partition\n";
+    cout << "j\tmove the main partition table\n";
++   cout << "k\tmove the backup partition table\n";
+    cout << "l\tset the sector alignment value\n";
+    cout << "m\treturn to main menu\n";
+    cout << "n\tcreate a new protective MBR\n";
+diff --git a/gpttext.h b/gpttext.h
+index 32e2f88..8ed6274 100644
+--- a/gpttext.h
++++ b/gpttext.h
+@@ -41,6 +41,7 @@ class GPTDataTextUI : public GPTData {
+       uint32_t GetPartNum(void);
+       void ResizePartitionTable(void);
+       void MoveMainTable(void);
++      void MoveSecondTable(void);
+       void CreatePartition(void);
+       void DeletePartition(void);
+       void ChangePartType(void);
